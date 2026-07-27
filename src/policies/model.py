@@ -164,6 +164,7 @@ class Model(nn.Module):
     ):
         # 1. Create a mapping of cleaned keys to actual model keys
         # This handles both "_orig_mod." (torch.compile) and "module." (DDP) prefixes
+        print(f"Loading state dict...")
         model_state_dict = self.state_dict()
         clean_to_actual_key = {}
         for k in model_state_dict.keys():

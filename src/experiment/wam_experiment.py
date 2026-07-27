@@ -38,6 +38,12 @@ from src.data.lerobot_mixture import ShardedLeRobotMixtureDataset
 from src.data.schema import EmbodimentTag
 from src.data.zulu_transform import DefaultDataCollator
 from src.experiment.trainer import WAMTrainer
+from src.experiment.lora_setup import (
+    detect_lora_target_modules,
+    load_pretrained_weights,
+    apply_lora,
+    is_peft_model,
+)
 
 from src.policies.model import Model
 
@@ -339,7 +345,8 @@ class BaseExperiment(ABC):
                 raise ValueError(f"Evaluation transform {tag} is invalid")
 
         cfg["training_args"]["output_dir"] = output_dir.rstrip("/")
-        cfg["training_args"]["run_name"] = "wam_train_001_20260629"
+        #cfg["training_args"]["run_name"] = "wam_train_001_20260629"
+        cfg["training_args"]["run_name"] = "zulu_finetune_pickplace_lora_001"
         print(f"Run name {cfg["training_args"]["run_name"]}")
 
         training_args = transformers.training_args.TrainingArguments(
@@ -375,7 +382,7 @@ class BaseExperiment(ABC):
             exit(0)
         if resume_path:
             print(f"Resuming training from {resume_path}")
-            resume_from_checkpoint = True
+            resume_from_checkpoint = False
         else:
             # First time training.
             resume_from_checkpoint = False
@@ -443,7 +450,7 @@ class BaseExperiment(ABC):
             self.output_abs_dir,
             "data",
             #"dreamzero_droid_first3" # pretraining
-            "dreamzero_droid_pickplace" # finetuning
+            "dreamzero_droid_pick_g" # finetuning
         )
         print(f"Dataset path {dataset_path}")
         mixture_spec[0]["dataset_path"] = {"oxe_droid": [dataset_path]} # manual
@@ -537,8 +544,64 @@ class BaseExperiment(ABC):
             num_embodiments=1,
         )
         
+        train_architecture = action_head_cfg.get("train_architecture", "full")
+        if train_architecture == "lora":
+            print("Lora finetuning")
+            #pretrained_path = cfg.get("pretrained_checkpoint_path") ##
+            #pretrained_path = r"D:/sakana_ai/zulu/checkpoint-0" ##
+            pretrained_path = Path(self.output_abs_dir) / "checkpoint-0"
+            if pretrained_path:
+                before_sum = sum(p.sum().item() for p in model.dit_backbone.parameters())
+                print(f"DiT Backbone weight sum BEFORE: {before_sum}")
+
+                load_pretrained_weights(model, str(pretrained_path))
+                
+                after_sum = sum(p.sum().item() for p in model.dit_backbone.parameters())
+                print(f"DiT Backbone weight sum AFTER: {after_sum}")
+                
+                if before_sum == after_sum:
+                    raise RuntimeError("SILENT FAILURE: The weights did not change after loading the checkpoint! Check your state_dict keys.")
+                else:
+                    print("SUCCESS: Pretrained weights successfully mapped onto the DiT backbone.")
+            else:
+                raise FileNotFoundError("pretrained model path not found")
+            
+            config_targets = action_head_cfg.get("lora_target_modules")
+            #if config_targets:
+            #    # Config provides explicit targets — parse the comma-separated string
+            #    target_modules = [t.strip() for t in config_targets.split(",")]
+            #    print(f"Using config-specified LoRA targets: {target_modules}", flush=True)
+            #else:
+                # Auto-detect from the model architecture
+            target_modules = detect_lora_target_modules(
+                model, strategy="attention_and_ffn", verbose=True
+            )
+            
+            print(f"Lora config_targets {config_targets}")
+            
+            model = apply_lora(
+                model,
+                lora_rank=action_head_cfg.get("lora_rank", 8),
+                lora_alpha=action_head_cfg.get("lora_alpha", 16),
+                target_modules=target_modules,
+                lora_dropout=action_head_cfg.get("lora_dropout", 0.05),
+                verbose=True,
+            )
+            
+            use_gradient_checkpointing = False
+        
+        if train_architecture == "lora":
+            try:
+                base_model = model.base_model.model  # PeftModel -> LoraModel -> base Model
+                base_model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
+                print("[LoRA] Compiled dit_backbone blocks with torch.compile")
+            except Exception as e:
+                print(f"[LoRA] torch.compile skipped: {e}", flush=True)
+        else:
+            model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
+        
         # works on single gpu
-        model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
+        #model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
         
         # only compile the blocks of dit
         #for i, block in enumerate(model.dit_backbone.blocks):
@@ -556,16 +619,35 @@ class BaseExperiment(ABC):
         def gradient_checkpointing_disable(self, *args, **kwargs):
             self.dit_backbone.gradient_checkpointing = False
 
-        model.gradient_checkpointing_enable = gradient_checkpointing_enable.__get__(
-            model, model.__class__
-        )
-        model.gradient_checkpointing_disable = gradient_checkpointing_disable.__get__(
-            model, model.__class__
-        )
+        #model.gradient_checkpointing_enable = gradient_checkpointing_enable.__get__(
+        #    model, model.__class__
+        #)
+        #model.gradient_checkpointing_disable = gradient_checkpointing_disable.__get__(
+        #    model, model.__class__
+        #)
 
-        model.dit_backbone.gradient_checkpointing = cfg["action_head_cfg"].get(
-            "use_gradient_checkpointing", False # was True
-        )
+        #model.dit_backbone.gradient_checkpointing = cfg["action_head_cfg"].get(
+        #    "use_gradient_checkpointing", False # was True
+        #)
+
+        #return model
+        if train_architecture == "lora":
+            base_model = model.base_model.model
+            model.gradient_checkpointing_enable = gradient_checkpointing_enable.__get__(
+                base_model, base_model.__class__
+            )
+            model.gradient_checkpointing_disable = gradient_checkpointing_disable.__get__(
+                base_model, base_model.__class__
+            )
+            base_model.dit_backbone.gradient_checkpointing = use_gradient_checkpointing
+        else:
+            model.gradient_checkpointing_enable = gradient_checkpointing_enable.__get__(
+                model, model.__class__
+            )
+            model.gradient_checkpointing_disable = gradient_checkpointing_disable.__get__(
+                model, model.__class__
+            )
+            model.dit_backbone.gradient_checkpointing = use_gradient_checkpointing
 
         return model
 

@@ -282,16 +282,22 @@ class BaseTrainer(transformers.Trainer):  # type: ignore
     def save_model(
         self, output_dir: Optional[str] = None, _internal_call: bool = False
     ):
-        """
-        Production-grade, reflection-based serialization.
-        Dynamically detects completely frozen backbones by inspecting the computational graph
-        at runtime, omitting them while safely preserving all parameters and buffers of active modules.
-        """
         if self.args.should_save:
             if output_dir is None:
                 output_dir = self.args.output_dir
 
             os.makedirs(output_dir, exist_ok=True) # type: ignore
+            
+            # check if model is peft model
+            try:
+                from peft import PeftModel
+                is_peft = isinstance(self.model, PeftModel)
+            except ImportError:
+                is_peft = False
+            
+            if is_peft:
+                self.model.save_pretrained(output_dir)
+                return True
 
             # 1. Dynamically discover prefixes of submodules that are completely frozen
             # This avoids any hardcoded strings and handles any architecture names seamlessly.
