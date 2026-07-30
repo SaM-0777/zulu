@@ -2,7 +2,8 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict
-from configs.wam.wam_train import (
+from peft import PeftModel
+from src.configs.train import (
     video_keys,
     state_keys,
     action_keys,
@@ -10,17 +11,17 @@ from configs.wam.wam_train import (
     experiment_conf,
 )
 
-from dataset.lerobot import ModalityConfig, build_transform_pipeline
-from dataset.schema import DatasetMetadata, EmbodimentTag
-from dataset.transforms_base import ComposedModalityTransform
+from src.data.lerobot import ModalityConfig, build_transform_pipeline
+from src.data.schema import DatasetMetadata, EmbodimentTag
+from src.data.transforms_base import ComposedModalityTransform
 import matplotlib
 import matplotlib.markers
 import numpy as np
 import torch
 from tianshou.data import Batch
-from wam.model import Model
+from src.policies.model import Model
 import matplotlib.pyplot as plt
-from torchvision.io import write_video
+from torchvision.io import write_file
 from datetime import datetime
 
 # from tianshou.policy import BasePolicy as BaseTianshouPolicy
@@ -53,6 +54,7 @@ class WAMPolicy:
         checkpoint_path: str | Path,
         metadata_json_path: str | Path,
         # stats_json_path: str,
+        finetuned_checkpoint_path: str | Path | None = None,
         action_horizon: int = 24,
         embodiment: EmbodimentTag = EmbodimentTag.OXE_DROID,
     ) -> None:
@@ -70,6 +72,20 @@ class WAMPolicy:
         print(f"Loading weights from {weights_path}...")
         state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
         self.model.load_state_dict(state_dict, strict=False)
+        
+        if finetuned_checkpoint_path is not None:
+            finetuned_checkpoint_path = Path(finetuned_checkpoint_path)
+            print(f"Loading LoRA adapter from {finetuned_checkpoint_path}...")
+
+            self.model = PeftModel.from_pretrained(
+                self.model,
+                str(finetuned_checkpoint_path),
+                is_trainable=False,
+            )
+
+            print("Merging LoRA weights into base model for fast inference...")
+            self.model = self.model.merge_and_unload()
+            #if merge_lora:
 
         self.model.eval()
         self.model.requires_grad_(False)
@@ -201,24 +217,6 @@ class WAMPolicy:
         print("Model dtype, device ", model.dtype)
         self.print_model_parameters(model)
 
-        # def gradient_checkpointing_enable(self, *args, **kwargs):
-        #    # 'self' here refers to the 'model' instance
-        #    self.dit_backbone.gradient_checkpointing = True
-
-        # def gradient_checkpointing_disable(self, *args, **kwargs):
-        #    self.dit_backbone.gradient_checkpointing = False
-
-        # model.gradient_checkpointing_enable = gradient_checkpointing_enable.__get__(
-        #    model, model.__class__
-        # )
-        # model.gradient_checkpointing_disable = gradient_checkpointing_disable.__get__(
-        #    model, model.__class__
-        # )
-
-        # model.dit_backbone.gradient_checkpointing = cfg["action_head_cfg"].get(
-        #    "use_gradient_checkpointing", True
-        # )
-
         return model
 
     def offload_to_cpu(self):
@@ -244,7 +242,7 @@ class WAMPolicy:
 
         # Apply bf16 if needed
         if self.eval_bf16:
-            self.model = self.model.to(dtype=torch.float32)
+            self.model = self.model.to(dtype=torch.bfloat16)
 
         torch.cuda.empty_cache()
 
@@ -599,9 +597,9 @@ class WAMPolicy:
         frames = normalized_input["images"].squeeze(0)
         frames = frames.cpu()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"predicted_trajectory_{timestamp}.mp4"
-        write_video(output_path, frames, fps=15)
-        print(f"Video saved successfully to {output_path}")
+        output_path = f"outputs/predicted_trajectory_{timestamp}.mp4"
+        #write_file(output_path, frames)
+        #print(f"Video saved successfully to {output_path}")
         
         #print(f"images shape {type(normalized_input["images"])} {normalized_input["images"].shape} {normalized_input["images"].dtype}") # 1, 33, 180, 320, 3
         #print(f"state shape {normalized_input["state"].shape}")
@@ -617,6 +615,8 @@ class WAMPolicy:
             model_pred = self.model.lazy_joint_frame_action(normalized_input)
         normalized_action = model_pred["action_pred"].float()
         frame_pred = model_pred["frame_pred"]
+        
+        print(f"normalized_action shape {normalized_action.shape}")
         
         #self.plot_actions(action, normalized_action)
         #self.calculate_error(action, normalized_action)

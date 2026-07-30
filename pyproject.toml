@@ -12,11 +12,15 @@ dependencies = [
     "diffusers>=0.39.0",
     "dm-tree>=0.1.10",
     "einops>=0.8.2",
+    "matplotlib>=3.11.1",
+    "mujoco>=3.10.0",
     "numpy>=2.4.4",
     "opencv-python>=5.0.0.93",
     "pandas>=3.0.5",
     "peft>=0.19.1",
     "pyarrow>=25.0.0",
+    "rerun-sdk>=0.35.0",
+    "tianshou>=2.0.0",
     "torch>=2.13.0",
     "torchvision>=0.28.0",
     "transformers>=5.14.1",
@@ -29,5 +33,5 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu126" }
-torchvision = { index = "pytorch-cu126" }
+torch = { index = "pytorch-cu126", marker = "sys_platform != 'darwin'" }
+torchvision = { index = "pytorch-cu126", marker = "sys_platform != 'darwin'" }

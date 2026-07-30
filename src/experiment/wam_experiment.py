@@ -464,6 +464,9 @@ class BaseExperiment(ABC):
             mixture_kwargs=mixture_kwargs,
             dataset_kwargs=dataset_kwargs,
         )
+        
+        print("Using dataset ", train_dataset)
+        print(f"Episodes loaded = {len(train_dataset.datasets[0].trajectory_ids)}")
 
         return train_dataset
 
@@ -590,15 +593,15 @@ class BaseExperiment(ABC):
             
             use_gradient_checkpointing = False
         
-        if train_architecture == "lora":
-            try:
-                base_model = model.base_model.model  # PeftModel -> LoraModel -> base Model
-                base_model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
-                print("[LoRA] Compiled dit_backbone blocks with torch.compile")
-            except Exception as e:
-                print(f"[LoRA] torch.compile skipped: {e}", flush=True)
-        else:
-            model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
+        #if train_architecture == "lora":
+        #    try:
+        #        base_model = model.base_model.model  # PeftModel -> LoraModel -> base Model
+        #        base_model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
+        #        print("[LoRA] Compiled dit_backbone blocks with torch.compile")
+        #    except Exception as e:
+        #        print(f"[LoRA] torch.compile skipped: {e}", flush=True)
+        #else:
+        #    model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
         
         # works on single gpu
         #model.dit_backbone = torch.compile(model.dit_backbone, mode="max-autotune") # "default", "reduce-overhead", "max-autotune"
