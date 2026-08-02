@@ -17,3 +17,8 @@ models
 /scripts
 /wandb
 /outputs
+/lerobot_datasets
+/robosuite_data
+/misc
+
+*.rrd

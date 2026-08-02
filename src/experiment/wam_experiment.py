@@ -450,7 +450,8 @@ class BaseExperiment(ABC):
             self.output_abs_dir,
             "data",
             #"dreamzero_droid_first3" # pretraining
-            "dreamzero_droid_pick_g" # finetuning
+            #"dreamzero_droid_pick_g" # finetuning
+            "panda_pickplace_droid_v3"
         )
         print(f"Dataset path {dataset_path}")
         mixture_spec[0]["dataset_path"] = {"oxe_droid": [dataset_path]} # manual

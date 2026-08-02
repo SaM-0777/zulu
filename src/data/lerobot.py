@@ -67,7 +67,7 @@ METADATA_LANG_KEYS = [
 
 
 def calculate_dataset_statistics(
-    parquet_paths: list[Path], features: list[str] | None = None
+    parquet_paths: list[Path], features: list[str] | None = None, discarded_episode_indices: set[int] | list[int] | None = None,
 ) -> dict[str, DatasetStatisticalValues]:
     """Calculate the dataset statistics of all columns for a list of parquet files.
 
@@ -80,6 +80,8 @@ def calculate_dataset_statistics(
         dict[str, DatasetStatisticalValues]: Dictionary mapping feature names to their
             statistical values (mean, std, min, max, q01, q99).
     """
+    discarded = set(discarded_episode_indices or [])
+    
     # Dataset statistics
     all_low_dim_data_list = []
     # Collect all the data
@@ -89,7 +91,11 @@ def calculate_dataset_statistics(
     ):
         # Load the parquet file
         parquet_data = pd.read_parquet(parquet_path)
-        parquet_data = parquet_data
+        if discarded and "episode_index" in parquet_data.columns:
+            parquet_data = parquet_data[~parquet_data["episode_index"].isin(discarded)]
+        if len(parquet_data) == 0:
+            continue
+        #parquet_data = parquet_data
         all_low_dim_data_list.append(parquet_data)
     all_low_dim_data = pd.concat(all_low_dim_data_list, axis=0)
     # Compute dataset statistics
@@ -458,7 +464,8 @@ class LeRobotSingleDataset(Dataset):
                 if "float" in le_features[feature]["dtype"]:
                     lowdim_features.append(feature)
 
-            stats = calculate_dataset_statistics(parquet_files, lowdim_features)
+            discarded = self.lerobot_info_meta.get("discarded_episode_indices", [])
+            stats = calculate_dataset_statistics(parquet_files, lowdim_features, discarded)
             stats_serialized = {k: v.model_dump(mode="json") for k, v in stats.items()}
             with open(stats_path, "w") as f:
                 json.dump(stats_serialized, f, indent=4)
@@ -1271,9 +1278,12 @@ class LeRobotSingleDataset(Dataset):
             discarded_episode_indices = self._lerobot_info_meta.get(
                 "discarded_episode_indices", []
             )
+            
+            print(f"Found {len(discarded_episode_indices)} discarded episode indices")
 
         for trajectory_id in self.trajectory_ids:
             if trajectory_id in discarded_episode_indices:
+                print(f"trajectory_id {trajectory_id} is in discarded_episode_indices... skipping")
                 continue
             for base_index in self.step_filter[trajectory_id]:
                 all_steps.append((trajectory_id, base_index))
