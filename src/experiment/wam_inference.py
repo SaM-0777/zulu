@@ -572,7 +572,7 @@ class WAMPolicy:
         
         plt.suptitle("Model Action Trajectory Prediction", fontsize=14, y=0.99)
         plt.tight_layout()
-        plt.savefig("Figure_ap-16650.png", dpi=300, bbox_inches="tight")
+        plt.savefig("Figure_apf-1500.png", dpi=300, bbox_inches="tight")
         plt.close()
         #plt.show()
 
@@ -584,7 +584,8 @@ class WAMPolicy:
         plot_trajectory: bool = True,
         **kwargs,
     ):
-        #print(batch)
+        #print(batch.obs.keys())
+        
         is_batched = self._check_state_is_batched(batch.obs)
         if not is_batched:
             batch.obs = unsqueeze_dict_values(batch.obs)
@@ -647,8 +648,7 @@ class WAMPolicy:
         if not is_batched:
             batch.act = squeeze_dict_values(batch.act)
 
-        #return batch, frame_pred
-        return batch
+        return batch, frame_pred
 
     def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():

@@ -1,5 +1,6 @@
 from pathlib import Path
 import time
+from datetime import datetime
 from typing import List, Literal, Optional, Tuple
 from einops import rearrange
 import torch
@@ -9,6 +10,8 @@ from torch.distributions import Beta
 import torchvision.io as tv_io
 from torchvision.transforms import v2
 from transformers.feature_extraction_utils import BatchFeature
+import imageio
+import numpy as np
 
 from src.embeds.dinov2 import DinoV2Embedding
 from src.embeds.text_encoder import TextEncoder
@@ -442,60 +445,21 @@ class Model(nn.Module):
             bf, d, self.grid_h, self.grid_w
         )
         return patch_features.view(B, F, d, self.grid_h, self.grid_w).transpose(1, 2)
-
-    #def _run_diffusion_steps(
-    #    self,
-    #    x: torch.Tensor,
-    #    timestep: torch.Tensor,
-    #    timestep_action: Optional[torch.Tensor],
-    #    state: torch.Tensor,
-    #    embodiment_id: torch.Tensor,
-    #    contexts: list[torch.Tensor],
-    #    seq_len: int,
-    #    grid_size: Tuple[int, int, int],
-    #    kv_caches: list[list[torch.Tensor]],
-    #    crossattn_caches: list[list[dict]],
-    #    kv_cache_metadata: dict[str, bool | int],
-    #    action: Optional[torch.Tensor],
-    #):
-    #    predictions = []
-    #    for index, prompt_emb in enumerate(contexts):
-    #        kv_cache = kv_caches[index]
-    #        crossattn_cache = crossattn_caches[index]
-    #        with torch.no_grad():
-    #            frame_pred, action_noise_pred, updated_kv_caches = self.dit_backbone(
-    #                x=x,
-    #                timestep=timestep,
-    #                timestep_action=timestep_action,
-    #                context=prompt_emb,
-    #                seq_len=seq_len,
-    #                grid_size=grid_size,
-    #                kv_cache=kv_cache,
-    #                crossattn_cache=crossattn_cache,
-    #                current_start_frame=kv_cache_metadata["start_frame"],
-    #                action=action,
-    #                state=state,
-    #                embodiment_id=embodiment_id,
-    #            )
-
-    #        if kv_cache_metadata["update_kv_cache"]:
-    #            for block_index, updated_kv_cache in enumerate(updated_kv_caches):
-    #                kv_cache[block_index] = updated_kv_cache.clone()
-
-    #        frame_pred = frame_pred.clone()
-    #        if action_noise_pred is not None:
-    #            action_noise_pred = action_noise_pred.clone()
-    #        else:
-    #            action_noise_pred = torch.tensor(0.0, device=frame_pred.device)
-
-    #        predictions.append((frame_pred, action_noise_pred))
-
-    #    return predictions
-
-    # def generate_noise(self, shape, seed=None, device="cpu", dtype=torch.float16):
-    #    generator = None if seed is None else torch.Generator(device).manual_seed(seed)
-    #    noise = torch.randn(shape, generator=generator, device=device, dtype=dtype)
-    #    return noise
+    
+    #def save_input_frames(self, frames: torch.Tensor):
+    #    video_tensor = frames[0]
+    #    video_np = video_tensor.detach().cpu().numpy()
+        
+    #    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+    #    imageio.mimwrite(
+    #        f"outputs/videos/output_episode_{timestamp}.mp4", 
+    #        video_np, 
+    #        fps=15, 
+    #        codec="libx264", 
+    #        pixelformat="yuv420p"
+    #    )
+    #    print("Saved universal H.264 MP4 video successfully!")
 
     def lazy_joint_frame_action(self, feature_input: dict):
         self.vision_encoder.eval()
@@ -508,6 +472,8 @@ class Model(nn.Module):
         text_attention_mask_negative = feature_input["text_attention_mask_negative"] # can be None
         embodiment_id = feature_input["embodiment_id"]
         states = feature_input["state"]
+
+        #self.save_input_frames(frames)
 
         embodiment_id = torch.zeros_like(embodiment_id)
         frames = rearrange(frames, "b t h w c -> b t c h w")
@@ -546,10 +512,9 @@ class Model(nn.Module):
         noisy_input_action = torch.randn(
             (B, action_horizon, self.action_dim), device=device, dtype=self.dtype
         )
-        
-        # 🎯 CRITICAL FIX 1: Silence the 24 padded dimensions
+
         physical_action_dim = 8 # 7 joints + 1 gripper
-        noisy_input_action[..., physical_action_dim:] = 0.0
+        #noisy_input_action[..., physical_action_dim:] = 0.0
         
         sample_scheduler = FlowUniPCMultistepScheduler(
             num_train_timesteps=self.scheduler.num_train_timesteps,  # 1000
@@ -603,9 +568,10 @@ class Model(nn.Module):
                 return_dict=False,
             )[0]
 
-            noisy_input_action[..., physical_action_dim:] = 0.0
+            #noisy_input_action[..., physical_action_dim:] = 0.0
 
         latents_action = noisy_input_action
+        latents_action[..., physical_action_dim:] = 0.0
 
         timestep_dino_clean = torch.zeros(B, F_ctx, dtype=torch.int64, device=device)
         timestep_action_clean = torch.zeros(
@@ -637,259 +603,3 @@ class Model(nn.Module):
                 "frame_pred": next_frame_tokens,
             }
         )
-
-    # deprecated and irrelevant
-    #def ssss(self, feature_input: dict):
-    #    self.vision_encoder.eval()
-    #    self.text_encoder.eval()
-
-    #    print(f"feature_input {feature_input.keys()}")
-
-    #    frames = feature_input["images"]  # [B, T, H, W, C]
-    #    text = feature_input["text"]
-    #    text_attention_mask = feature_input["text_attention_mask"]
-    #    text_negative = feature_input["text_negative"]
-    #    text_attention_mask_negative = feature_input["text_attention_mask_negative"]
-    #    embodiment_id = feature_input["embodiment_id"]
-    #    states = feature_input["state"]
-
-    #    embodiment_id = torch.zeros_like(embodiment_id)
-
-    #    frames = rearrange(frames, "b t h w c -> b t c h w")
-
-    #    states = states.to(dtype=self.dtype)
-
-    #    B = frames.shape[0]
-    #    device = frames.device
-    #    tpf = self.tokens_per_frame
-    #    grid_h = self.grid_h
-    #    grid_w = self.grid_w
-
-    #    if getattr(self, "language", None) is None or self.language is None:
-    #        print("language is None, reset current_start_frame to 0")
-    #        self.language = text
-    #        self.current_start_frame = 0
-    #    elif not torch.equal(self.language, text):
-    #        print("language changed, reset current_start_frame to 0")
-    #        self.current_start_frame = 0
-    #        self.language = text
-    #    elif frames.shape[1] == 1:
-    #        print("frames.shape[1] == 1, reset current_start_frame to 0")
-    #        self.current_start_frame = 0
-    #    elif self.current_start_frame >= self.dit_backbone.local_attn_size:
-    #        print(
-    #            "current_start_frame >= local_attn_size, reset current_start_frame to 0"
-    #        )
-    #        self.current_start_frame = 0
-
-    #    text_inputs = [(text, text_attention_mask)]
-    #    if self.cfg_scale != 1.0:
-    #        text_inputs.append((text_negative, text_attention_mask_negative))
-    #    prompt_embs = [
-    #        self.text_encoder(t, m)["text_embeddings"] for t, m in text_inputs
-    #    ]
-
-    #    num_frame_per_block = self.dit_backbone.num_frame_per_block  # 8
-    #    num_action_per_block = self.dit_backbone.num_action_per_block  # 24
-    #    num_state_per_block = self.dit_backbone.num_state_per_block  # 1
-
-    #    self.max_context_frames = 25  # from config
-    #    num_image_blocks = (self.max_context_frames - 1) // num_frame_per_block
-    #    action_horizon = num_image_blocks * num_action_per_block
-    #    state_horizon = num_image_blocks * num_state_per_block
-
-    #    if self.current_start_frame == 0:
-    #        F_available = frames.shape[1]
-
-    #        if F_available < self.max_context_frames:
-    #            deficit = self.max_context_frames - F_available
-    #            last_frame = frames[:, -1:]  # [B, 1, C, H, W]
-    #            padding = last_frame.expand(-1, deficit, -1, -1, -1)
-    #            frames_context = torch.cat([frames, padding], dim=1)
-    #            print(
-    #                f"[INIT] Padded {deficit} frames (had {F_available}, need {self.max_context_frames})"
-    #            )
-    #        elif F_available > self.max_context_frames:
-    #            frames_context = frames[:, -self.max_context_frames :]
-    #        else:
-    #            frames_context = frames
-
-    #        with torch.no_grad():
-    #            latents = self._prepare_dino_latents(frames_context).to(self.dtype)
-    #            _, dino_dim, F_d, gh, gw = latents.shape
-    #            self.dino_tokens = latents.permute(0, 2, 3, 4, 1).reshape(
-    #                B, F_d * gh * gw, dino_dim
-    #            )
-
-    #        F_ctx = frames_context.shape[1]
-
-    #        self.kv_caches = list(
-    #            self.dit_backbone._create_kv_caches(
-    #                batch_size=B,
-    #                dtype=self.dtype,
-    #                device=device,
-    #                frame_seqlen=tpf,
-    #            )
-    #        )
-    #        # → [kv_cache1, kv_cache_neg]
-
-    #        self.crossattn_caches = list(
-    #            self.dit_backbone._create_crossattn_caches(
-    #                batch_size=B,
-    #                dtype=self.dtype,
-    #                device=device,
-    #            )
-    #        )
-    #        # → [crossattn_cache, crossattn_cache_neg]
-
-    #        kv_caches_for_init = (
-    #            self.kv_caches if self.cfg_scale > 1.0 else self.kv_caches[:1]
-    #        )
-    #        crossattn_for_init = (
-    #            self.crossattn_caches
-    #            if self.cfg_scale > 1.0
-    #            else self.crossattn_caches[:1]
-    #        )
-
-    #        timestep_dino = torch.zeros(B, F_ctx, dtype=torch.int64, device=device)
-    #        seq_len_init = F_ctx * tpf
-
-    #        self._run_diffusion_steps(
-    #            x=self.dino_tokens,
-    #            timestep=timestep_dino,
-    #            timestep_action=None,
-    #            state=states,
-    #            embodiment_id=embodiment_id,
-    #            contexts=prompt_embs,
-    #            seq_len=seq_len_init,
-    #            grid_size=(F_ctx, grid_h, grid_w),
-    #            kv_caches=kv_caches_for_init,
-    #            crossattn_caches=crossattn_for_init,
-    #            kv_cache_metadata=dict(start_frame=0, update_kv_cache=True),
-    #            action=None,
-    #        )
-
-    #        self.current_start_frame = F_ctx
-
-    #    assert self.kv_caches is not None
-    #    assert self.crossattn_caches is not None
-
-    #    noisy_input_action = torch.randn(
-    #        (B, action_horizon, self.action_dim), device=device, dtype=self.dtype
-    #    )
-
-    #    sample_scheduler = FlowUniPCMultistepScheduler(
-    #        num_train_timesteps=self.scheduler.num_train_timesteps,
-    #        shift=1,
-    #        use_dynamic_shifting=False,
-    #        solver_order=2,
-    #        prediction_type="flow_prediction",
-    #    )
-    #    sample_scheduler.set_timesteps(
-    #        self.num_inference_steps, device=device, shift=5.0
-    #    )
-
-    #    last_frame_tokens = self.dino_tokens[:, -tpf:]
-    #    F_new = 1
-
-    #    kv_caches_for_diff = (
-    #        self.kv_caches if self.cfg_scale > 1.0 else self.kv_caches[:1]
-    #    )
-    #    crossattn_for_diff = (
-    #        self.crossattn_caches if self.cfg_scale > 1.0 else self.crossattn_caches[:1]
-    #    )
-
-    #    for index, action_timestep in enumerate(sample_scheduler.timesteps):
-    #        timestep_dino_new = torch.zeros(B, F_new, dtype=torch.int64, device=device)
-    #        timestep_action = torch.ones(
-    #            [B, action_horizon],
-    #            device=device,
-    #            dtype=torch.int64,
-    #        ) * int(action_timestep)
-
-    #        predictions = self._run_diffusion_steps(
-    #            x=last_frame_tokens,
-    #            timestep=timestep_dino_new,
-    #            timestep_action=timestep_action,
-    #            state=states,
-    #            embodiment_id=embodiment_id,
-    #            contexts=prompt_embs,
-    #            seq_len=tpf,
-    #            grid_size=(F_new, grid_h, grid_w),
-    #            kv_caches=kv_caches_for_diff,
-    #            crossattn_caches=crossattn_for_diff,
-    #            kv_cache_metadata=dict(
-    #                start_frame=self.current_start_frame,
-    #                update_kv_cache=False,  # READ-ONLY during diffusion
-    #            ),
-    #            action=noisy_input_action,
-    #        )
-
-    #        if self.cfg_scale > 1.0:
-    #            _, action_cond = predictions[0]
-    #            _, action_uncond = predictions[1]
-    #            action_noise_pred = action_uncond + self.cfg_scale * (
-    #                action_cond - action_uncond
-    #            )
-    #        else:
-    #            _, action_noise_pred = predictions[0]
-
-    #        noisy_input_action = sample_scheduler.step(
-    #            model_output=action_noise_pred,
-    #            timestep=action_timestep,
-    #            sample=noisy_input_action,
-    #            step_index=index,
-    #            return_dict=False,
-    #        )[0]
-
-    #    latents_action = noisy_input_action
-
-    #    # 7. FRAME PREDICTION (Regression — Update Caches)
-    #    timestep_dino_clean = torch.zeros(B, F_new, dtype=torch.int64, device=device)
-    #    timestep_action_clean = torch.zeros(
-    #        B, action_horizon, dtype=torch.int64, device=device
-    #    )
-
-    #    kv_caches_for_frame = (
-    #        self.kv_caches if self.cfg_scale > 1.0 else self.kv_caches[:1]
-    #    )
-    #    crossattn_for_frame = (
-    #        self.crossattn_caches if self.cfg_scale > 1.0 else self.crossattn_caches[:1]
-    #    )
-
-    #    predictions = self._run_diffusion_steps(
-    #        x=last_frame_tokens,
-    #        timestep=timestep_dino_clean,
-    #        timestep_action=timestep_action_clean,
-    #        state=states,
-    #        embodiment_id=embodiment_id,
-    #        contexts=prompt_embs,
-    #        seq_len=tpf,
-    #        grid_size=(F_new, grid_h, grid_w),
-    #        kv_caches=kv_caches_for_frame,
-    #        crossattn_caches=crossattn_for_frame,
-    #        kv_cache_metadata=dict(
-    #            start_frame=self.current_start_frame,
-    #            update_kv_cache=True,  # WRITE
-    #        ),
-    #        action=latents_action,
-    #    )
-
-    #    frame_pred = predictions[0][0]
-
-    #    next_frame_tokens = frame_pred
-    #    self.dino_tokens = torch.cat([self.dino_tokens, next_frame_tokens], dim=1)
-
-    #    F_current = self.dino_tokens.shape[1] // tpf
-    #    if F_current > self.max_context_frames:
-    #        self.dino_tokens = self.dino_tokens[:, -self.max_context_frames * tpf :]
-
-    #    self.current_start_frame += 1
-    #    torch.cuda.synchronize()
-
-    #    return BatchFeature(
-    #        data={
-    #            "action_pred": latents_action,
-    #            "frame_pred": next_frame_tokens,
-    #        }
-    #    )
